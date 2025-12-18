@@ -29,7 +29,7 @@ def main():
     app.add_handler(edit_gift_handler)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_partner_username))
     
-    print("Бот запущен...")
+    print("Bot started...")
     app.run_polling()
 
 
