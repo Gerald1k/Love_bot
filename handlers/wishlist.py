@@ -1,12 +1,17 @@
 import random
 import re
+import os
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, CallbackQueryHandler, CommandHandler, filters
 
 from database import users_collection, gifts_collection
 
+# Папка для загрузки фото
+UPLOAD_DIR = "upload"
+
 # Состояния для ConversationHandler
-NAME, PRICE, LINK, DESCRIPTION, CONFIRM = range(5)
+NAME, PRICE, LINK, DESCRIPTION, PHOTO, CONFIRM = range(6)
 
 
 async def add_gift(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -70,13 +75,52 @@ async def skip_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def gift_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["gift_description"] = update.message.text.strip()
-    return await show_gift_summary(update, context)
+    return await ask_photo(update, context)
 
 
 async def skip_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     context.user_data["gift_description"] = None
+    return await ask_photo(update, context, edit_message=query)
+
+
+async def ask_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, edit_message=None):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏭ Пропустить", callback_data="skip_photo")]
+    ])
+    
+    text = "📷 Загрузи фото подарка:"
+    
+    if edit_message:
+        await edit_message.edit_message_text(text, reply_markup=keyboard)
+    else:
+        await update.message.reply_text(text, reply_markup=keyboard)
+    return PHOTO
+
+
+async def gift_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Создаём папку если нет
+    if not os.path.exists(UPLOAD_DIR):
+        os.makedirs(UPLOAD_DIR)
+    
+    photo = update.message.photo[-1]  # Берём наибольшее разрешение
+    file = await photo.get_file()
+    
+    # Генерируем имя файла по дате до миллисекунд
+    filename = datetime.now().strftime("%Y%m%d_%H%M%S_%f") + ".jpg"
+    filepath = os.path.join(UPLOAD_DIR, filename)
+    
+    await file.download_to_drive(filepath)
+    context.user_data["gift_photo"] = filename
+    
+    return await show_gift_summary(update, context)
+
+
+async def skip_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data["gift_photo"] = None
     return await show_gift_summary(update, context, edit_message=query)
 
 
@@ -85,13 +129,15 @@ async def show_gift_summary(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     price = context.user_data["gift_price"]
     link = context.user_data.get("gift_link") or "—"
     description = context.user_data.get("gift_description") or "—"
+    photo = "✅ Загружено" if context.user_data.get("gift_photo") else "—"
     
     summary = (
         "📋 Проверь данные подарка:\n\n"
         f"🎁 Название: {name}\n"
         f"💰 Цена: {price}\n"
         f"🔗 Ссылка: {link}\n"
-        f"📝 Описание: {description}"
+        f"📝 Описание: {description}\n"
+        f"📷 Фото: {photo}"
     )
     
     keyboard = InlineKeyboardMarkup([
@@ -123,7 +169,8 @@ async def gift_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "name": context.user_data["gift_name"],
             "price": context.user_data["gift_price"],
             "link": context.user_data.get("gift_link"),
-            "description": context.user_data.get("gift_description")
+            "description": context.user_data.get("gift_description"),
+            "file_name": context.user_data.get("gift_photo")
         })
         
         await query.edit_message_text("✅ Подарок сохранён в твой вишлист! 🎉")
@@ -185,6 +232,10 @@ add_gift_handler = ConversationHandler(
         DESCRIPTION: [
             CallbackQueryHandler(skip_description, pattern="^skip_description$"),
             MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(MENU_PATTERN), gift_description)
+        ],
+        PHOTO: [
+            CallbackQueryHandler(skip_photo, pattern="^skip_photo$"),
+            MessageHandler(filters.PHOTO, gift_photo)
         ],
         CONFIRM: [CallbackQueryHandler(gift_confirm, pattern="^gift_")]
     },
@@ -276,14 +327,28 @@ async def handle_price_selection(update: Update, context: ContextTypes.DEFAULT_T
         [InlineKeyboardButton("🎀 Подарено!", callback_data=f"gifted_{gift['_id']}")]
     ])
     
-    await query.edit_message_text(
+    text = (
         f"🎁 Вот что хочет твой партнёр:\n\n"
         f"✨ {gift['name']}\n"
         f"💰 {gift.get('price', '—')}"
         f"{link_text}"
-        f"{desc_text}",
-        reply_markup=keyboard
+        f"{desc_text}"
     )
+    
+    # Если есть фото — отправляем с фото
+    if gift.get("file_name"):
+        filepath = os.path.join(UPLOAD_DIR, gift["file_name"])
+        if os.path.exists(filepath):
+            await query.delete_message()
+            with open(filepath, "rb") as photo:
+                await query.message.reply_photo(
+                    photo=photo,
+                    caption=text,
+                    reply_markup=keyboard
+                )
+            return
+    
+    await query.edit_message_text(text, reply_markup=keyboard)
 
 
 async def my_wishlist(update: Update, context: ContextTypes.DEFAULT_TYPE):
