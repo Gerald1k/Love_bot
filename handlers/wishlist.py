@@ -1,7 +1,7 @@
 import random
 import re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, CallbackQueryHandler, filters
+from telegram.ext import ContextTypes, ConversationHandler, MessageHandler, CallbackQueryHandler, CommandHandler, filters
 
 from database import users_collection, gifts_collection
 
@@ -155,29 +155,44 @@ async def gift_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from telegram import ReplyKeyboardRemove
     context.user_data.clear()
-    await update.message.reply_text("❌ Добавление подарка отменено")
+    
+    if update.message.text == "/stop":
+        await update.message.reply_text(
+            "⏹ Все процессы остановлены.\n\n"
+            "Нажми /start чтобы начать заново.",
+            reply_markup=ReplyKeyboardRemove()
+        )
+    else:
+        await update.message.reply_text("❌ Действие отменено")
     return ConversationHandler.END
 
+
+MENU_PATTERN = "^(💝 Подобрать подарок для партнёра|📋 Мой вишлист|🎀 Подарено|🎁 Добавить свой подарок)$"
 
 # ConversationHandler для добавления подарка
 add_gift_handler = ConversationHandler(
     entry_points=[MessageHandler(filters.Regex("^🎁 Добавить свой подарок$"), add_gift)],
     per_message=False,
     states={
-        NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, gift_name)],
-        PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, gift_price)],
+        NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(MENU_PATTERN), gift_name)],
+        PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(MENU_PATTERN), gift_price)],
         LINK: [
             CallbackQueryHandler(skip_link, pattern="^skip_link$"),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, gift_link)
+            MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(MENU_PATTERN), gift_link)
         ],
         DESCRIPTION: [
             CallbackQueryHandler(skip_description, pattern="^skip_description$"),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, gift_description)
+            MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(MENU_PATTERN), gift_description)
         ],
         CONFIRM: [CallbackQueryHandler(gift_confirm, pattern="^gift_")]
     },
-    fallbacks=[MessageHandler(filters.COMMAND, cancel)]
+    fallbacks=[
+        CommandHandler("stop", cancel),
+        MessageHandler(filters.Regex(MENU_PATTERN), cancel),
+        MessageHandler(filters.COMMAND, cancel)
+    ]
 )
 
 
@@ -483,7 +498,11 @@ edit_gift_handler = ConversationHandler(
     per_message=False,
     states={
         ConversationHandler.WAITING: [CallbackQueryHandler(edit_field_select, pattern="^editfield_")],
-        "EDIT_VALUE": [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_value)]
+        "EDIT_VALUE": [MessageHandler(filters.TEXT & ~filters.COMMAND & ~filters.Regex(MENU_PATTERN), edit_value)]
     },
-    fallbacks=[MessageHandler(filters.COMMAND, cancel)]
+    fallbacks=[
+        CommandHandler("stop", cancel),
+        MessageHandler(filters.Regex(MENU_PATTERN), cancel),
+        MessageHandler(filters.COMMAND, cancel)
+    ]
 )
