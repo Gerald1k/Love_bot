@@ -73,11 +73,8 @@ async def handle_partner_username(update: Update, context: ContextTypes.DEFAULT_
         await update.message.reply_text("Отправь /start чтобы начать!")
         return
     
-    # Если партнёр уже есть
+    # Если партнёр уже есть — игнорируем сообщение (меню обработает другой хендлер)
     if existing_user.get("partner_username"):
-        await update.message.reply_text(
-            f"У тебя уже есть партнёр: @{existing_user['partner_username']} 💑"
-        )
         return
     
     # Проверяем формат username
